@@ -2,6 +2,7 @@ package com.example.studentpass;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -16,6 +17,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
@@ -52,12 +54,17 @@ public class App extends AppCompatActivity {
     private LinearLayout resultLayout;
     private TextView passTitleTextView;
     private TextView passDetailsTextView;
+    private Button printButton;
     private Button scanNextButton;
 
     // Camera & ML Kit variables
     private TextRecognizer textRecognizer;
     private ExecutorService cameraExecutor;
     private boolean isProcessingFrame = false;
+
+    // Bluetooth printing
+    private BluetoothPassPrinter passPrinter;
+    private String currentPassText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -66,6 +73,7 @@ public class App extends AppCompatActivity {
         // 1. Initialize Offline ML Kit Engine
         textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
         cameraExecutor = Executors.newSingleThreadExecutor();
+        passPrinter = new BluetoothPassPrinter(this);
 
         // 2. Build UI dynamically
         buildMainUI();
@@ -143,6 +151,15 @@ public class App extends AppCompatActivity {
         passDetailsTextView.setPadding(0, 0, 0, 48);
         resultLayout.addView(passDetailsTextView);
 
+        printButton = new Button(this);
+        printButton.setText("PRINT VIA BLUETOOTH");
+        printButton.setTextSize(18);
+        printButton.setBackgroundColor(Color.parseColor("#0277BD"));
+        printButton.setTextColor(Color.WHITE);
+        printButton.setPadding(32, 16, 32, 16);
+        printButton.setOnClickListener(v -> passPrinter.print(currentPassText));
+        resultLayout.addView(printButton);
+
         scanNextButton = new Button(this);
         scanNextButton.setText("OK (SCAN NEXT)");
         scanNextButton.setTextSize(18);
@@ -215,59 +232,21 @@ public class App extends AppCompatActivity {
     }
 
     private void parseAndDisplayCardData(Text visionText) {
-    String studentName = "Unknown Student";
+        // IdCardParser reads the card top-left down and returns the first name-like line.
+        String studentName = IdCardParser.extractName(visionText);
+        String date = new SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(new Date());
+        String time = new SimpleDateFormat("hh:mm a", Locale.getDefault()).format(new Date());
 
-    // Scan every text line detected by ML Kit
-    for (Text.TextBlock block : visionText.getTextBlocks()) {
-        for (Text.Line line : block.getLines()) {
-            String trimmed = line.getText().trim();
+        currentPassText = "NAME: " + studentName + "\n"
+                + "DATE: " + date + "\n"
+                + "TIME: " + time;
 
-            // 1. Skip lines that contain any numbers (e.g. ID numbers, years, codes)
-            if (trimmed.matches(".*\\d.*")) {
-                continue;
-            }
-
-            // 2. Skip common header words found on school cards
-            String upper = trimmed.toUpperCase();
-            if (upper.contains("MONTGOMERY") || 
-                upper.contains("PUBLIC SCHOOLS") || 
-                upper.contains("HIGH SCHOOL") || 
-                upper.contains("HS") ||
-                upper.contains("STUDENT") || 
-                upper.contains("ID") ||
-                upper.contains("PASS") ||
-                upper.contains("GRADE") ||
-                upper.contains("COUNTY")) {
-                continue;
-            }
-
-            // 3. Must contain letters and be at least 3 characters long
-            if (trimmed.matches(".*[a-zA-Z].*") && trimmed.length() > 2) {
-                studentName = trimmed;
-                break; // Stop scanning once we find the student's name
-            }
-        }
-        
-        if (!studentName.equals("Unknown Student")) {
-            break; // Stop checking further text blocks
-        }
+        runOnUiThread(() -> {
+            passDetailsTextView.setText(currentPassText);
+            cameraContainer.setVisibility(View.GONE);
+            resultLayout.setVisibility(View.VISIBLE);
+        });
     }
-
-    final String finalName = studentName;
-
-    runOnUiThread(() -> {
-        String currentDate = new SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(new Date());
-        String currentTime = new SimpleDateFormat("hh:mm a", Locale.getDefault()).format(new Date());
-
-        String passContent = "NAME: " + finalName + "\n" +
-                             "DATE: " + currentDate + "\n" +
-                             "TIME: " + currentTime;
-
-        passDetailsTextView.setText(passContent);
-        cameraContainer.setVisibility(View.GONE);
-        resultLayout.setVisibility(View.VISIBLE);
-    });
-}
 
     private void resetToCameraScreen() {
         resultLayout.setVisibility(View.GONE);
@@ -277,10 +256,21 @@ public class App extends AppCompatActivity {
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == CAMERA_PERMISSION_CODE && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+        if (requestCode == BluetoothPassPrinter.REQUEST_BLUETOOTH_PERMISSION) {
+            passPrinter.onPromptAnswered(grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED);
+        } else if (requestCode == CAMERA_PERMISSION_CODE && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             startCamera();
         } else {
             Toast.makeText(this, "Camera permission required!", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == BluetoothPassPrinter.REQUEST_ENABLE_BLUETOOTH) {
+            passPrinter.onPromptAnswered(resultCode == RESULT_OK);
         }
     }
 

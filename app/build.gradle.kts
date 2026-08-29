@@ -23,6 +23,8 @@ android {
 dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
 
+    testImplementation("junit:junit:4.13.2")
+
     // CameraX for taking photos
     val cameraxVersion = "1.3.1"
     implementation("androidx.camera:camera-core:${cameraxVersion}")
