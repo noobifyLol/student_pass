@@ -55,6 +55,7 @@ public class App extends AppCompatActivity {
     private TextView passTitleTextView;
     private TextView passDetailsTextView;
     private Button printButton;
+    private Button usbPrintButton;
     private Button scanNextButton;
 
     // camera / ml kit
@@ -62,8 +63,9 @@ public class App extends AppCompatActivity {
     private ExecutorService cameraExecutor;
     private boolean isProcessingFrame = false;
 
-    // bluetooth print stuff
+    // print stuff, one printer per cable basically. both send the exact same pass
     private BluetoothPassPrinter passPrinter;
+    private UsbPassPrinter usbPassPrinter;
     private String currentPassText;
 
     @Override
@@ -74,6 +76,7 @@ public class App extends AppCompatActivity {
         textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
         cameraExecutor = Executors.newSingleThreadExecutor();
         passPrinter = new BluetoothPassPrinter(this);
+        usbPassPrinter = new UsbPassPrinter(this);
 
         // 2. build the screen
         buildMainUI();
@@ -159,6 +162,16 @@ public class App extends AppCompatActivity {
         printButton.setPadding(32, 16, 32, 16);
         printButton.setOnClickListener(v -> passPrinter.print(currentPassText));
         resultLayout.addView(printButton);
+
+        // same pass, just for when the printers plugged in with an otg cable instead of paired
+        usbPrintButton = new Button(this);
+        usbPrintButton.setText("PRINT VIA USB");
+        usbPrintButton.setTextSize(18);
+        usbPrintButton.setBackgroundColor(Color.parseColor("#00796B"));
+        usbPrintButton.setTextColor(Color.WHITE);
+        usbPrintButton.setPadding(32, 16, 32, 16);
+        usbPrintButton.setOnClickListener(v -> usbPassPrinter.print(currentPassText));
+        resultLayout.addView(usbPrintButton);
 
         scanNextButton = new Button(this);
         scanNextButton.setText("OK (SCAN NEXT)");
@@ -279,5 +292,6 @@ public class App extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         cameraExecutor.shutdown();
+        usbPassPrinter.release();
     }
 }

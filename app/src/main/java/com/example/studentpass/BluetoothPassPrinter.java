@@ -18,7 +18,6 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -100,7 +99,7 @@ final class BluetoothPassPrinter {
             try (BluetoothSocket socket = printer.createRfcommSocketToServiceRecord(SPP_UUID)) {
                 socket.connect();
                 OutputStream out = socket.getOutputStream();
-                out.write(receipt(passText));
+                out.write(EscPos.receipt(passText));
                 out.flush();
                 Thread.sleep(400); // gotta give the printer like half a sec to actually finish before we slam the socket shut
                 activity.runOnUiThread(() -> toast("Pass printed."));
@@ -108,25 +107,6 @@ final class BluetoothPassPrinter {
                 activity.runOnUiThread(() -> toast("Could not reach the printer."));
             }
         }).start();
-    }
-
-    /** esc/pos is the language these printers speak, its really just plain text with a few weird control bytes mixed in */
-    static byte[] receipt(String passText) {
-        char esc = 27;      // this is the ESC byte, basically tells the printer "hey next couple bytes are a command not actual text"
-        char big = 48;      // this number makes the font double width and double height
-        char off = 0;       // puts whatever came before back to normal / default
-        char centre = 1;
-
-        String body = "" + esc + '@'                 // resets the printer back to default settings
-                + esc + 'a' + centre
-                + esc + '!' + big
-                + "HALL PASS\n"
-                + esc + '!' + off                    // ok normal size text again
-                + esc + 'a' + off                    // and back to left aligned
-                + "\n" + passText + "\n"
-                + "\nSignature: ______________\n"
-                + "\n\n\n";                          // just feeding some blank paper so u can actually tear it off after
-        return body.getBytes(StandardCharsets.ISO_8859_1);
     }
 
     boolean hasPermission() {
