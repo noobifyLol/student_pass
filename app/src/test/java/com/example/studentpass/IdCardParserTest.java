@@ -11,8 +11,9 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Each Line is (text, top, left) — the position ML Kit reports for that line on the card.
- * These run on a plain computer, no phone needed: ./gradlew testDebugUnitTest
+ * each Line down here is just (text, top, left), same position stuff ml kit gives us back
+ * for where that line sat on the card. these tests run fine on a regular computer btw, dont
+ * need an actual phone or anything: ./gradlew testDebugUnitTest
  */
 public class IdCardParserTest {
 
@@ -48,7 +49,7 @@ public class IdCardParserTest {
     @Test
     public void readsSameRowLeftToRight() {
         List<Line> lines = Arrays.asList(
-                new Line("Grade 11", 50, 400),   // same row, further right
+                new Line("Grade 11", 50, 400),   // same row as the name but way further right
                 new Line("Alex Rivera", 52, 30));
 
         assertEquals("Alex Rivera", IdCardParser.extractName(lines));

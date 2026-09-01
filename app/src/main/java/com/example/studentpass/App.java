@@ -46,23 +46,23 @@ public class App extends AppCompatActivity {
 
     private static final int CAMERA_PERMISSION_CODE = 100;
     
-    // UI Elements
+    // ui stuff
     private FrameLayout cameraContainer;
     private PreviewView previewView;
     private Button captureButton;
-    
+
     private LinearLayout resultLayout;
     private TextView passTitleTextView;
     private TextView passDetailsTextView;
     private Button printButton;
     private Button scanNextButton;
 
-    // Camera & ML Kit variables
+    // camera / ml kit
     private TextRecognizer textRecognizer;
     private ExecutorService cameraExecutor;
     private boolean isProcessingFrame = false;
 
-    // Bluetooth printing
+    // bluetooth print stuff
     private BluetoothPassPrinter passPrinter;
     private String currentPassText;
 
@@ -70,15 +70,15 @@ public class App extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 1. Initialize Offline ML Kit Engine
+        // 1. spin up the offline ml kit engine (this is the thing that actually reads text off the card)
         textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
         cameraExecutor = Executors.newSingleThreadExecutor();
         passPrinter = new BluetoothPassPrinter(this);
 
-        // 2. Build UI dynamically
+        // 2. build the screen
         buildMainUI();
 
-        // 3. Request permissions & start camera
+        // 3. ask for camera perms then start it up, if we already have perms just go
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera();
         } else {
@@ -93,7 +93,7 @@ public class App extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
-        // CAMERA CONTAINER (Visible during scan)
+        // camera screen, this one shows first when u open the app
         cameraContainer = new FrameLayout(this);
         cameraContainer.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -123,7 +123,7 @@ public class App extends AppCompatActivity {
         captureButton.setOnClickListener(v -> triggerCapture());
         cameraContainer.addView(captureButton);
 
-        // RESULT LAYOUT (Visible after photo capture)
+        // result screen, stays hidden til we actually scan something
         resultLayout = new LinearLayout(this);
         resultLayout.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -202,7 +202,7 @@ public class App extends AppCompatActivity {
     }
 
     private void triggerCapture() {
-        isProcessingFrame = true; // Signal analyzer to process the very next frame
+        isProcessingFrame = true; // just tells the analyzer below to grab the very next frame that comes in
         Toast.makeText(this, "Reading Card...", Toast.LENGTH_SHORT).show();
     }
 
@@ -232,7 +232,8 @@ public class App extends AppCompatActivity {
     }
 
     private void parseAndDisplayCardData(Text visionText) {
-        // IdCardParser reads the card top-left down and returns the first name-like line.
+        // idCardParser does the actual work here, reads top left down and grabs the first line
+        // that looks like a name to it
         String studentName = IdCardParser.extractName(visionText);
         String date = new SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(new Date());
         String time = new SimpleDateFormat("hh:mm a", Locale.getDefault()).format(new Date());
