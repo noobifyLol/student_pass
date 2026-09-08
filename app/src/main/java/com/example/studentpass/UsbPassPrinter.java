@@ -55,11 +55,14 @@ final class UsbPassPrinter {
     };
 
     UsbPassPrinter(Activity activity) {
-        this.activity = activity;
-        // NOT_EXPORTED cause this broadcast is ours, no other app has any business sending it to us
-        ContextCompat.registerReceiver(activity, permissionReceiver,
-                new IntentFilter(ACTION_USB_PERMISSION), ContextCompat.RECEIVER_NOT_EXPORTED);
-    }
+    this.activity = activity;
+    // Must be RECEIVER_EXPORTED so the system USB permission dialog can broadcast back to us
+    int flag = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU 
+            ? ContextCompat.RECEIVER_EXPORTED 
+            : 0;
+    ContextCompat.registerReceiver(activity, permissionReceiver,
+            new IntentFilter(ACTION_USB_PERMISSION), flag);
+}
 
     /** app.java calls this when the screen closes so we dont leave the receiver sitting there registered */
     void release() {
@@ -122,10 +125,25 @@ final class UsbPassPrinter {
             try {
                 byte[] bytes = EscPos.receipt(passText);
                 boolean sent = false;
-                if (connection.claimInterface(pipe.iface, true)) { // true = boot whatever driver had it, its ours now
-                    sent = connection.bulkTransfer(pipe.endpoint, bytes, bytes.length, SEND_TIMEOUT_MS) == bytes.length;
-                    connection.releaseInterface(pipe.iface);
+                if (connection.claimInterface(pipe.iface, true)) {
+                int maxPacketSize = pipe.endpoint.getMaxPacketSize();
+                int offset = 0;
+                sent = true;
+
+                while (offset < bytes.length) {
+                    int length = Math.min(bytes.length - offset, maxPacketSize);
+                    byte[] chunk = new byte[length];
+                    System.arraycopy(bytes, offset, chunk, 0, length);
+
+                    int written = connection.bulkTransfer(pipe.endpoint, chunk, length, SEND_TIMEOUT_MS);
+                    if (written < 0) {
+                        sent = false;
+                        break;
+                    }
+                    offset += written;
                 }
+                connection.releaseInterface(pipe.iface);
+            }
                 boolean printed = sent;
                 activity.runOnUiThread(() -> toast(printed ? "Pass printed." : "Could not reach the printer."));
             } finally {
