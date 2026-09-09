@@ -128,8 +128,8 @@ final class UsbPassPrinter {
             try {
                 byte[] bytes = EscPos.receipt(passText);
                 boolean sent = false;
-                if (connection.claimInterface(pipe.iface, true)) {
-                    int maxPacketSize = pipe.endpoint.getMaxPacketSize();
+                int maxPacketSize = pipe.endpoint.getMaxPacketSize();
+                if (maxPacketSize > 0 && connection.claimInterface(pipe.iface, true)) {
                     int offset = 0;
                     sent = true;
 
@@ -139,7 +139,9 @@ final class UsbPassPrinter {
                         System.arraycopy(bytes, offset, chunk, 0, length);
 
                         int written = connection.bulkTransfer(pipe.endpoint, chunk, length, SEND_TIMEOUT_MS);
-                        if (written < 0) {
+                        // <= 0 covers both a hard error (-1) and a stalled endpoint reporting no
+                        // progress (0), either way looping again would just spin forever
+                        if (written <= 0) {
                             sent = false;
                             break;
                         }

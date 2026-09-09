@@ -11,6 +11,8 @@ import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
+import android.util.Log;
+import android.util.Size;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -44,7 +46,6 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -276,10 +277,17 @@ public class App extends AppCompatActivity {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
 
-                Preview preview = new Preview.Builder().build();
+                // fixed resolution instead of letting CameraX auto-pick one -- auto-selection is
+                // what trips up older/quirky camera2 HALs (older Samsung chipsets in particular)
+                Size targetResolution = new Size(1280, 720);
+
+                Preview preview = new Preview.Builder()
+                        .setTargetResolution(targetResolution)
+                        .build();
                 preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
                 ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
+                        .setTargetResolution(targetResolution)
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build();
 
@@ -290,8 +298,11 @@ public class App extends AppCompatActivity {
                 cameraProvider.unbindAll();
                 cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
 
-            } catch (ExecutionException | InterruptedException e) {
-                e.printStackTrace();
+            } catch (Exception e) {
+                // was only catching ExecutionException/InterruptedException before, which let any
+                // other camera2/HAL failure (common on older devices) crash the whole app on open
+                Log.e("StudentPass", "Camera failed to start", e);
+                Toast.makeText(this, "Camera failed to start on this device.", Toast.LENGTH_LONG).show();
             }
         }, ContextCompat.getMainExecutor(this));
     }
