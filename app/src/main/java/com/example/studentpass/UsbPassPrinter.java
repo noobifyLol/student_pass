@@ -21,21 +21,9 @@ import androidx.core.content.ContextCompat;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * same hall pass as the bluetooth one, just down a usb cable instead.
- *
- * u need a usb-otg adapter for this, thats the little dongle that lets the phone be the host
- * for once instead of the thing getting charged, then the printer plugs straight into that.
- * theres no permission to put in the manifest for this one, android pops its own "let this app
- * talk to the usb device" box the first time instead. same 4 steps as bluetooth -- find the
- * printer, get the ok from that popup, open the pipe, then just write the text over.
- */
 final class UsbPassPrinter {
 
-    /** our own private broadcast, android sends it back to us once the user answers the usb popup */
     private static final String ACTION_USB_PERMISSION = "com.example.studentpass.USB_PERMISSION";
-
-    /** how long we sit waiting on the cable before giving up, printers are slow but not this slow */
     private static final int SEND_TIMEOUT_MS = 5000;
 
     private final Activity activity;
@@ -55,21 +43,22 @@ final class UsbPassPrinter {
     };
 
     UsbPassPrinter(Activity activity) {
-    this.activity = activity;
-    // Must be RECEIVER_EXPORTED so the system USB permission dialog can broadcast back to us
-    int flag = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU 
-            ? ContextCompat.RECEIVER_EXPORTED 
-            : 0;
-    ContextCompat.registerReceiver(activity, permissionReceiver,
-            new IntentFilter(ACTION_USB_PERMISSION), flag);
-}
-
-    /** app.java calls this when the screen closes so we dont leave the receiver sitting there registered */
-    void release() {
-        activity.unregisterReceiver(permissionReceiver);
+        this.activity = activity;
+        int flag = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU 
+                ? ContextCompat.RECEIVER_EXPORTED 
+                : 0;
+        ContextCompat.registerReceiver(activity, permissionReceiver,
+                new IntentFilter(ACTION_USB_PERMISSION), flag);
     }
 
-    /** prints the pass. if android hasnt asked about this printer yet it asks first n comes right back here once u answer */
+    void release() {
+        try {
+            activity.unregisterReceiver(permissionReceiver);
+        } catch (IllegalArgumentException ignored) {
+            // Unregistered safely
+        }
+    }
+
     void print(String passText) {
         pendingPass = passText;
 
@@ -79,25 +68,40 @@ final class UsbPassPrinter {
             return;
         }
 
-        List<UsbDevice> printers = new ArrayList<>();
-        for (UsbDevice device : manager.getDeviceList().values()) {
-            if (pipeTo(device) != null) {
-                printers.add(device);
+        // Run USB device discovery on a background thread to prevent UI freezing on Galaxy S8
+        new Thread(() -> {
+            List<UsbDevice> printers = new ArrayList<>();
+            for (UsbDevice device : manager.getDeviceList().values()) {
+                if (pipeTo(device) != null) {
+                    printers.add(device);
+                }
             }
-        }
-        if (printers.isEmpty()) {
-            toast("Plug the printer in with an OTG adapter first.");
-            return;
-        }
 
-        String[] names = new String[printers.size()];
-        for (int i = 0; i < names.length; i++) {
-            names[i] = nameOf(printers.get(i));
-        }
-        new AlertDialog.Builder(activity)
-                .setTitle("Print pass to")
-                .setItems(names, (dialog, which) -> askThenSend(manager, printers.get(which), passText))
-                .show();
+            if (printers.isEmpty()) {
+                activity.runOnUiThread(() -> toast("Plug the printer in with an OTG adapter first."));
+                return;
+            }
+
+            // Fetch product names on background thread (getProductName causes synchronous I/O)
+            String[] names = new String[printers.size()];
+            for (int i = 0; i < names.length; i++) {
+                names[i] = nameOf(printers.get(i));
+            }
+
+            // Switch back to Main Thread only to show the UI dialog
+            activity.runOnUiThread(() -> {
+                if (activity.isFinishing() || activity.isDestroyed()) return;
+
+                if (printers.size() == 1) {
+                    askThenSend(manager, printers.get(0), passText);
+                } else {
+                    new AlertDialog.Builder(activity)
+                            .setTitle("Print pass to")
+                            .setItems(names, (dialog, which) -> askThenSend(manager, printers.get(which), passText))
+                            .show();
+                }
+            });
+        }).start();
     }
 
     private void askThenSend(UsbManager manager, UsbDevice device, String passText) {
@@ -105,8 +109,7 @@ final class UsbPassPrinter {
             send(device, passText);
             return;
         }
-        // MUTABLE cause android fills in which device u picked n whether u said yes before handing this
-        // back to us, and setPackage keeps it aimed at us only, android 14 refuses to build it otherwise
+
         Intent answer = new Intent(ACTION_USB_PERMISSION).setPackage(activity.getPackageName());
         int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0;
         manager.requestPermission(device, PendingIntent.getBroadcast(activity, 0, answer, flags));
@@ -126,24 +129,24 @@ final class UsbPassPrinter {
                 byte[] bytes = EscPos.receipt(passText);
                 boolean sent = false;
                 if (connection.claimInterface(pipe.iface, true)) {
-                int maxPacketSize = pipe.endpoint.getMaxPacketSize();
-                int offset = 0;
-                sent = true;
+                    int maxPacketSize = pipe.endpoint.getMaxPacketSize();
+                    int offset = 0;
+                    sent = true;
 
-                while (offset < bytes.length) {
-                    int length = Math.min(bytes.length - offset, maxPacketSize);
-                    byte[] chunk = new byte[length];
-                    System.arraycopy(bytes, offset, chunk, 0, length);
+                    while (offset < bytes.length) {
+                        int length = Math.min(bytes.length - offset, maxPacketSize);
+                        byte[] chunk = new byte[length];
+                        System.arraycopy(bytes, offset, chunk, 0, length);
 
-                    int written = connection.bulkTransfer(pipe.endpoint, chunk, length, SEND_TIMEOUT_MS);
-                    if (written < 0) {
-                        sent = false;
-                        break;
+                        int written = connection.bulkTransfer(pipe.endpoint, chunk, length, SEND_TIMEOUT_MS);
+                        if (written < 0) {
+                            sent = false;
+                            break;
+                        }
+                        offset += written;
                     }
-                    offset += written;
+                    connection.releaseInterface(pipe.iface);
                 }
-                connection.releaseInterface(pipe.iface);
-            }
                 boolean printed = sent;
                 activity.runOnUiThread(() -> toast(printed ? "Pass printed." : "Could not reach the printer."));
             } finally {
@@ -152,11 +155,6 @@ final class UsbPassPrinter {
         }).start();
     }
 
-    /**
-     * finds the way out of the phone and into the printer. proper printers announce themselves as usb
-     * class 7 so we grab those first, but the cheap ones just say "vendor specific", so if we never see
-     * a real one we settle for any pipe thats bulk and pointing outwards, which is a printer anyway.
-     */
     private static Pipe pipeTo(UsbDevice device) {
         Pipe fallback = null;
         for (int i = 0; i < device.getInterfaceCount(); i++) {
@@ -187,7 +185,6 @@ final class UsbPassPrinter {
         Toast.makeText(activity, message, Toast.LENGTH_SHORT).show();
     }
 
-    /** just the interface plus the one endpoint on it that actually carries bytes out, thats it */
     private static final class Pipe {
         final UsbInterface iface;
         final UsbEndpoint endpoint;

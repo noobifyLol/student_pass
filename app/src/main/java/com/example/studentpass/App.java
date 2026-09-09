@@ -52,14 +52,11 @@ public class App extends AppCompatActivity {
 
     private static final int CAMERA_PERMISSION_CODE = 100;
 
-    // where the teacher name gets remembered between app launches when u tick "set as default"
     private static final String PREFS_NAME = "student_pass_prefs";
     private static final String KEY_DEFAULT_TEACHER = "default_teacher";
 
-    // every pass this thing prints is a bathroom pass so its just baked in
     private static final String DESTINATION = "BATHROOM";
 
-    // ui stuff
     private FrameLayout cameraContainer;
     private PreviewView previewView;
     private Button captureButton;
@@ -73,17 +70,14 @@ public class App extends AppCompatActivity {
     private Button usbPrintButton;
     private Button scanNextButton;
 
-    // camera / ml kit
     private TextRecognizer textRecognizer;
     private ExecutorService cameraExecutor;
     private boolean isProcessingFrame = false;
 
-    // print stuff, one printer per cable basically. both send the exact same pass
     private BluetoothPassPrinter passPrinter;
     private UsbPassPrinter usbPassPrinter;
     private String currentPassText;
 
-    // whos signing the pass. gets read off the box up top the moment u hit capture
     private SharedPreferences prefs;
     private String currentTeacherName = "";
 
@@ -91,17 +85,14 @@ public class App extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 1. spin up the offline ml kit engine (this is the thing that actually reads text off the card)
         textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
         cameraExecutor = Executors.newSingleThreadExecutor();
         passPrinter = new BluetoothPassPrinter(this);
         usbPassPrinter = new UsbPassPrinter(this);
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
-        // 2. build the screen
         buildMainUI();
 
-        // 3. ask for camera perms then start it up, if we already have perms just go
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera();
         } else {
@@ -116,7 +107,6 @@ public class App extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
-        // camera screen, this one shows first when u open the app
         cameraContainer = new FrameLayout(this);
         cameraContainer.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -135,7 +125,7 @@ public class App extends AppCompatActivity {
         captureButton.setTextSize(18);
         captureButton.setBackgroundColor(Color.parseColor("#6200EE"));
         captureButton.setTextColor(Color.WHITE);
-        
+
         FrameLayout.LayoutParams btnParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -146,10 +136,8 @@ public class App extends AppCompatActivity {
         captureButton.setOnClickListener(v -> triggerCapture());
         cameraContainer.addView(captureButton);
 
-        // added last so it sits on top of the preview instead of behind it
         cameraContainer.addView(buildTeacherPanel());
 
-        // result screen, stays hidden til we actually scan something
         resultLayout = new LinearLayout(this);
         resultLayout.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -186,7 +174,6 @@ public class App extends AppCompatActivity {
         printButton.setOnClickListener(v -> passPrinter.print(currentPassText));
         resultLayout.addView(printButton);
 
-        // same pass, just for when the printers plugged in with an otg cable instead of paired
         usbPrintButton = new Button(this);
         usbPrintButton.setText("PRINT VIA USB");
         usbPrintButton.setTextSize(18);
@@ -210,17 +197,11 @@ public class App extends AppCompatActivity {
         setContentView(rootLayout);
     }
 
-    /**
-     * the bar across the top of the camera where u type who is signing the pass.
-     *
-     * tick "set as default" and the name sticks around for next time the app opens, untick it
-     * and its forgotten again.
-     */
     private View buildTeacherPanel() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(48, 48, 48, 32);
-        panel.setBackgroundColor(Color.parseColor("#CC000000")); // see through black so u can still line the card up behind it
+        panel.setBackgroundColor(Color.parseColor("#CC000000"));
 
         TextView label = new TextView(this);
         label.setText("TEACHER");
@@ -243,8 +224,6 @@ public class App extends AppCompatActivity {
         defaultTeacherCheckBox.setTextColor(Color.WHITE);
         panel.addView(defaultTeacherCheckBox);
 
-        // if a default got saved on an earlier run, drop it straight back in. doing this before the
-        // listeners go on below so it doesnt count as the user ticking the box themselves
         String savedTeacher = prefs.getString(KEY_DEFAULT_TEACHER, "");
         if (!savedTeacher.isEmpty()) {
             teacherNameInput.setText(savedTeacher);
@@ -261,8 +240,6 @@ public class App extends AppCompatActivity {
             }
         });
 
-        // while the box is ticked, typing keeps the saved copy in sync so u dont have to untick
-        // and retick it just to fix a typo
         teacherNameInput.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
 
@@ -286,7 +263,6 @@ public class App extends AppCompatActivity {
 
     private void saveDefaultTeacher(String name) {
         if (name.isEmpty()) {
-            // nothing worth remembering, dont leave a blank name sat in there
             prefs.edit().remove(KEY_DEFAULT_TEACHER).apply();
         } else {
             prefs.edit().putString(KEY_DEFAULT_TEACHER, name).apply();
@@ -322,7 +298,7 @@ public class App extends AppCompatActivity {
 
     private void triggerCapture() {
         currentTeacherName = teacherNameInput.getText().toString().trim();
-        isProcessingFrame = true; // just tells the analyzer below to grab the very next frame that comes in
+        isProcessingFrame = true;
         Toast.makeText(this, "Reading Card...", Toast.LENGTH_SHORT).show();
     }
 
@@ -352,15 +328,12 @@ public class App extends AppCompatActivity {
     }
 
     private void parseAndDisplayCardData(Text visionText) {
-        // idCardParser does the actual work here, reads top left down and grabs the first line
-        // that looks like a name to it
         String studentName = IdCardParser.extractName(visionText);
         String date = new SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(new Date());
         String time = new SimpleDateFormat("hh:mm a", Locale.getDefault()).format(new Date());
 
         StringBuilder pass = new StringBuilder();
         pass.append("NAME: ").append(studentName).append("\n");
-        // if nobody typed a teacher in, the line just gets left off the pass entirely
         if (!currentTeacherName.isEmpty()) {
             pass.append("TEACHER: ").append(currentTeacherName).append("\n");
         }
@@ -386,8 +359,14 @@ public class App extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == BluetoothPassPrinter.REQUEST_BLUETOOTH_PERMISSION) {
-            passPrinter.onPromptAnswered(grantResults.length > 0
-                    && grantResults[0] == PackageManager.PERMISSION_GRANTED);
+            boolean allGranted = grantResults.length > 0;
+            for (int result : grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                    break;
+                }
+            }
+            passPrinter.onPromptAnswered(allGranted);
         } else if (requestCode == CAMERA_PERMISSION_CODE && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             startCamera();
         } else {
@@ -406,6 +385,9 @@ public class App extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        if (textRecognizer != null) {
+            textRecognizer.close();
+        }
         cameraExecutor.shutdown();
         usbPassPrinter.release();
     }
