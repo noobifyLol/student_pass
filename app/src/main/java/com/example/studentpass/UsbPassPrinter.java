@@ -44,11 +44,11 @@ final class UsbPassPrinter {
 
     UsbPassPrinter(Activity activity) {
         this.activity = activity;
-        int flag = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU 
-                ? ContextCompat.RECEIVER_EXPORTED 
-                : 0;
+        // The permission broadcast is sent by the system to this app only (see setPackage
+        // in askThenSend), so it must not be exported. ContextCompat handles the
+        // pre-Tiramisu dispatch itself, but still requires a real flag on targetSdk 34.
         ContextCompat.registerReceiver(activity, permissionReceiver,
-                new IntentFilter(ACTION_USB_PERMISSION), flag);
+                new IntentFilter(ACTION_USB_PERMISSION), ContextCompat.RECEIVER_NOT_EXPORTED);
     }
 
     void release() {
