@@ -28,6 +28,7 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AlertDialog;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
@@ -49,6 +50,8 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -83,6 +86,11 @@ public class App extends AppCompatActivity {
 
     private LinearLayout activePassesLayout;
     private LinearLayout activePassesList;
+    private LinearLayout passLogLayout;
+    private LinearLayout passLogList;
+    private CheckBox selectAllLogCheckBox;
+    private final Set<String> selectedLogIds = new HashSet<>();
+    private boolean changingLogSelection;
 
     private TextRecognizer textRecognizer;
     private ExecutorService cameraExecutor;
@@ -234,6 +242,7 @@ public class App extends AppCompatActivity {
         rootLayout.addView(cameraContainer);
         rootLayout.addView(resultLayout);
         rootLayout.addView(activePassesLayout);
+        rootLayout.addView(passLogLayout);
         setContentView(rootLayout);
         updateActivePassesButton();
     }
@@ -275,6 +284,82 @@ public class App extends AppCompatActivity {
         closeButton.setText("DONE");
         closeButton.setOnClickListener(v -> hideActivePasses());
         activePassesLayout.addView(closeButton);
+
+        Button passLogButton = new Button(this);
+        passLogButton.setText("VIEW PASS LOG");
+        passLogButton.setOnClickListener(v -> showPassLog());
+        activePassesLayout.addView(passLogButton, activePassesLayout.getChildCount() - 1);
+
+        buildPassLogUI();
+    }
+
+    private void buildPassLogUI() {
+        passLogLayout = new LinearLayout(this);
+        passLogLayout.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        passLogLayout.setOrientation(LinearLayout.VERTICAL);
+        passLogLayout.setPadding(32, 48, 32, 32);
+        passLogLayout.setBackgroundColor(Color.parseColor("#F5F5F5"));
+        passLogLayout.setVisibility(View.GONE);
+
+        TextView title = new TextView(this);
+        title.setText("PASS LOG");
+        title.setTextSize(24);
+        title.setTypeface(null, Typeface.BOLD);
+        title.setTextColor(Color.parseColor("#263238"));
+        passLogLayout.addView(title);
+
+        TextView message = new TextView(this);
+        message.setText("Saved pass and return history. Select entries to delete them.");
+        message.setTextSize(15);
+        message.setTextColor(Color.DKGRAY);
+        message.setPadding(0, 0, 0, 8);
+        passLogLayout.addView(message);
+
+        selectAllLogCheckBox = new CheckBox(this);
+        selectAllLogCheckBox.setText("SELECT ALL");
+        selectAllLogCheckBox.setTextSize(16);
+        selectAllLogCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (changingLogSelection) {
+                return;
+            }
+            selectedLogIds.clear();
+            if (isChecked) {
+                for (PassRecord record : loadPassRecords()) {
+                    selectedLogIds.add(record.id);
+                }
+            }
+            refreshPassLog();
+        });
+        passLogLayout.addView(selectAllLogCheckBox);
+
+        ScrollView scrollView = new ScrollView(this);
+        passLogList = new LinearLayout(this);
+        passLogList.setOrientation(LinearLayout.VERTICAL);
+        scrollView.addView(passLogList);
+        passLogLayout.addView(scrollView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        Button deleteSelectedButton = new Button(this);
+        deleteSelectedButton.setText("DELETE SELECTED");
+        deleteSelectedButton.setTextColor(Color.WHITE);
+        deleteSelectedButton.setBackgroundColor(Color.parseColor("#C62828"));
+        deleteSelectedButton.setOnClickListener(v -> confirmDeleteSelected());
+        passLogLayout.addView(deleteSelectedButton);
+
+        Button deleteAllButton = new Button(this);
+        deleteAllButton.setText("DELETE ALL LOG DATA");
+        deleteAllButton.setTextColor(Color.WHITE);
+        deleteAllButton.setBackgroundColor(Color.parseColor("#8E0000"));
+        deleteAllButton.setOnClickListener(v -> confirmDeleteAll());
+        passLogLayout.addView(deleteAllButton);
+
+        Button closeButton = new Button(this);
+        closeButton.setText("DONE");
+        closeButton.setOnClickListener(v -> hidePassLog());
+        passLogLayout.addView(closeButton);
     }
 
     private View buildTeacherPanel() {
@@ -359,6 +444,143 @@ public class App extends AppCompatActivity {
     private void hideActivePasses() {
         activePassesLayout.setVisibility(View.GONE);
         cameraContainer.setVisibility(View.VISIBLE);
+    }
+
+    private void showPassLog() {
+        selectedLogIds.clear();
+        refreshPassLog();
+        activePassesLayout.setVisibility(View.GONE);
+        passLogLayout.setVisibility(View.VISIBLE);
+    }
+
+    private void hidePassLog() {
+        passLogLayout.setVisibility(View.GONE);
+        activePassesLayout.setVisibility(View.VISIBLE);
+        refreshActivePasses();
+    }
+
+    private void refreshPassLog() {
+        List<PassRecord> records = loadPassRecords();
+        selectedLogIds.retainAll(recordIds(records));
+        passLogList.removeAllViews();
+
+        changingLogSelection = true;
+        selectAllLogCheckBox.setChecked(!records.isEmpty() && selectedLogIds.size() == records.size());
+        changingLogSelection = false;
+
+        if (records.isEmpty()) {
+            TextView emptyMessage = new TextView(this);
+            emptyMessage.setText("No saved pass records.");
+            emptyMessage.setTextSize(18);
+            emptyMessage.setTextColor(Color.DKGRAY);
+            emptyMessage.setGravity(Gravity.CENTER);
+            emptyMessage.setPadding(0, 48, 0, 48);
+            passLogList.addView(emptyMessage);
+            return;
+        }
+
+        // Newest records first, while leaving their order in saved storage unchanged.
+        for (int i = records.size() - 1; i >= 0; i--) {
+            passLogList.addView(buildPassLogCard(records.get(i)));
+        }
+    }
+
+    private Set<String> recordIds(List<PassRecord> records) {
+        Set<String> ids = new HashSet<>();
+        for (PassRecord record : records) {
+            ids.add(record.id);
+        }
+        return ids;
+    }
+
+    private View buildPassLogCard(PassRecord record) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(24, 16, 24, 16);
+        card.setBackgroundColor(Color.WHITE);
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        cardParams.setMargins(0, 0, 0, 16);
+        card.setLayoutParams(cardParams);
+
+        CheckBox selectCheckBox = new CheckBox(this);
+        selectCheckBox.setText(record.studentName);
+        selectCheckBox.setTextSize(20);
+        selectCheckBox.setTypeface(null, Typeface.BOLD);
+        selectCheckBox.setChecked(selectedLogIds.contains(record.id));
+        selectCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (isChecked) {
+                selectedLogIds.add(record.id);
+            } else {
+                selectedLogIds.remove(record.id);
+            }
+            updateSelectAllState();
+        });
+        card.addView(selectCheckBox);
+
+        TextView details = new TextView(this);
+        String teacherLine = record.teacherName.isEmpty() ? "" : "Teacher: " + record.teacherName + "\n";
+        String returnLine = record.returnedAt == 0
+                ? "Status: Still out"
+                : "Back: " + formatDateTime(record.returnedAt);
+        details.setText(teacherLine + "Destination: " + record.destination + "\nOut: "
+                + formatDateTime(record.issuedAt) + "\n" + returnLine);
+        details.setTextSize(16);
+        details.setTextColor(Color.DKGRAY);
+        card.addView(details);
+        return card;
+    }
+
+    private void updateSelectAllState() {
+        List<PassRecord> records = loadPassRecords();
+        changingLogSelection = true;
+        selectAllLogCheckBox.setChecked(!records.isEmpty() && selectedLogIds.size() == records.size());
+        changingLogSelection = false;
+    }
+
+    private void confirmDeleteSelected() {
+        if (selectedLogIds.isEmpty()) {
+            Toast.makeText(this, "Select one or more log entries first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Delete selected entries?")
+                .setMessage("This removes " + selectedLogIds.size() + " saved log entr"
+                        + (selectedLogIds.size() == 1 ? "y." : "ies."))
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("DELETE", (dialog, which) -> deleteSelectedLogRecords())
+                .show();
+    }
+
+    private void deleteSelectedLogRecords() {
+        List<PassRecord> records = loadPassRecords();
+        List<PassRecord> keptRecords = new ArrayList<>();
+        for (PassRecord record : records) {
+            if (!selectedLogIds.contains(record.id)) {
+                keptRecords.add(record);
+            }
+        }
+        savePassRecords(keptRecords);
+        selectedLogIds.clear();
+        refreshPassLog();
+        updateActivePassesButton();
+        Toast.makeText(this, "Selected log entries deleted.", Toast.LENGTH_SHORT).show();
+    }
+
+    private void confirmDeleteAll() {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete all pass log data?")
+                .setMessage("This permanently removes every saved pass and return record.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("DELETE ALL", (dialog, which) -> {
+                    savePassRecords(new ArrayList<>());
+                    selectedLogIds.clear();
+                    refreshPassLog();
+                    updateActivePassesButton();
+                    Toast.makeText(this, "All pass log data deleted.", Toast.LENGTH_SHORT).show();
+                })
+                .show();
     }
 
     private void recordCurrentPass() {
@@ -611,7 +833,9 @@ public class App extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {
-        if (activePassesLayout != null && activePassesLayout.getVisibility() == View.VISIBLE) {
+        if (passLogLayout != null && passLogLayout.getVisibility() == View.VISIBLE) {
+            hidePassLog();
+        } else if (activePassesLayout != null && activePassesLayout.getVisibility() == View.VISIBLE) {
             hideActivePasses();
         } else {
             super.onBackPressed();
