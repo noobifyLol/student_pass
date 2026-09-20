@@ -21,6 +21,7 @@ import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -44,10 +45,17 @@ import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 public class App extends AppCompatActivity {
 
@@ -55,6 +63,7 @@ public class App extends AppCompatActivity {
 
     private static final String PREFS_NAME = "student_pass_prefs";
     private static final String KEY_DEFAULT_TEACHER = "default_teacher";
+    private static final String KEY_PASS_LOG = "pass_log";
 
     private static final String DESTINATION = "BATHROOM";
 
@@ -70,6 +79,10 @@ public class App extends AppCompatActivity {
     private Button printButton;
     private Button usbPrintButton;
     private Button scanNextButton;
+    private Button activePassesButton;
+
+    private LinearLayout activePassesLayout;
+    private LinearLayout activePassesList;
 
     private TextRecognizer textRecognizer;
     private ExecutorService cameraExecutor;
@@ -81,6 +94,9 @@ public class App extends AppCompatActivity {
 
     private SharedPreferences prefs;
     private String currentTeacherName = "";
+    private String currentStudentName = "";
+    private long currentPassIssuedAt;
+    private boolean currentPassRecorded;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -137,6 +153,20 @@ public class App extends AppCompatActivity {
         captureButton.setOnClickListener(v -> triggerCapture());
         cameraContainer.addView(captureButton);
 
+        activePassesButton = new Button(this);
+        activePassesButton.setTextSize(16);
+        activePassesButton.setBackgroundColor(Color.parseColor("#455A64"));
+        activePassesButton.setTextColor(Color.WHITE);
+        activePassesButton.setOnClickListener(v -> showActivePasses());
+        FrameLayout.LayoutParams activeButtonParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        activeButtonParams.gravity = Gravity.BOTTOM | Gravity.START;
+        activeButtonParams.setMargins(64, 0, 0, 176);
+        activePassesButton.setLayoutParams(activeButtonParams);
+        cameraContainer.addView(activePassesButton);
+
         cameraContainer.addView(buildTeacherPanel());
 
         resultLayout = new LinearLayout(this);
@@ -172,7 +202,10 @@ public class App extends AppCompatActivity {
         printButton.setBackgroundColor(Color.parseColor("#0277BD"));
         printButton.setTextColor(Color.WHITE);
         printButton.setPadding(32, 16, 32, 16);
-        printButton.setOnClickListener(v -> passPrinter.print(currentPassText));
+        printButton.setOnClickListener(v -> {
+            recordCurrentPass();
+            passPrinter.print(currentPassText);
+        });
         resultLayout.addView(printButton);
 
         usbPrintButton = new Button(this);
@@ -181,7 +214,10 @@ public class App extends AppCompatActivity {
         usbPrintButton.setBackgroundColor(Color.parseColor("#00796B"));
         usbPrintButton.setTextColor(Color.WHITE);
         usbPrintButton.setPadding(32, 16, 32, 16);
-        usbPrintButton.setOnClickListener(v -> usbPassPrinter.print(currentPassText));
+        usbPrintButton.setOnClickListener(v -> {
+            recordCurrentPass();
+            usbPassPrinter.print(currentPassText);
+        });
         resultLayout.addView(usbPrintButton);
 
         scanNextButton = new Button(this);
@@ -193,9 +229,52 @@ public class App extends AppCompatActivity {
         scanNextButton.setOnClickListener(v -> resetToCameraScreen());
         resultLayout.addView(scanNextButton);
 
+        buildActivePassesUI();
+
         rootLayout.addView(cameraContainer);
         rootLayout.addView(resultLayout);
+        rootLayout.addView(activePassesLayout);
         setContentView(rootLayout);
+        updateActivePassesButton();
+    }
+
+    private void buildActivePassesUI() {
+        activePassesLayout = new LinearLayout(this);
+        activePassesLayout.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        activePassesLayout.setOrientation(LinearLayout.VERTICAL);
+        activePassesLayout.setPadding(32, 48, 32, 32);
+        activePassesLayout.setBackgroundColor(Color.parseColor("#F5F5F5"));
+        activePassesLayout.setVisibility(View.GONE);
+
+        TextView title = new TextView(this);
+        title.setText("STUDENTS CURRENTLY OUT");
+        title.setTextSize(24);
+        title.setTypeface(null, Typeface.BOLD);
+        title.setTextColor(Color.parseColor("#263238"));
+        title.setPadding(0, 0, 0, 16);
+        activePassesLayout.addView(title);
+
+        TextView instructions = new TextView(this);
+        instructions.setText("Tap BACK when a student returns. Their return time is saved in the pass log.");
+        instructions.setTextSize(15);
+        instructions.setTextColor(Color.DKGRAY);
+        instructions.setPadding(0, 0, 0, 16);
+        activePassesLayout.addView(instructions);
+
+        ScrollView scrollView = new ScrollView(this);
+        activePassesList = new LinearLayout(this);
+        activePassesList.setOrientation(LinearLayout.VERTICAL);
+        scrollView.addView(activePassesList);
+        activePassesLayout.addView(scrollView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        Button closeButton = new Button(this);
+        closeButton.setText("DONE");
+        closeButton.setOnClickListener(v -> hideActivePasses());
+        activePassesLayout.addView(closeButton);
     }
 
     private View buildTeacherPanel() {
@@ -270,6 +349,167 @@ public class App extends AppCompatActivity {
         }
     }
 
+    private void showActivePasses() {
+        refreshActivePasses();
+        cameraContainer.setVisibility(View.GONE);
+        resultLayout.setVisibility(View.GONE);
+        activePassesLayout.setVisibility(View.VISIBLE);
+    }
+
+    private void hideActivePasses() {
+        activePassesLayout.setVisibility(View.GONE);
+        cameraContainer.setVisibility(View.VISIBLE);
+    }
+
+    private void recordCurrentPass() {
+        if (currentPassRecorded || currentStudentName.isEmpty()) {
+            return;
+        }
+
+        List<PassRecord> records = loadPassRecords();
+        records.add(new PassRecord(
+                UUID.randomUUID().toString(), currentStudentName, currentTeacherName,
+                DESTINATION, currentPassIssuedAt, 0
+        ));
+        savePassRecords(records);
+        currentPassRecorded = true;
+        updateActivePassesButton();
+        Toast.makeText(this, currentStudentName + " is now marked as out.", Toast.LENGTH_SHORT).show();
+    }
+
+    private void refreshActivePasses() {
+        activePassesList.removeAllViews();
+        List<PassRecord> records = loadPassRecords();
+        boolean hasActivePasses = false;
+
+        for (PassRecord record : records) {
+            if (record.returnedAt != 0) {
+                continue;
+            }
+            hasActivePasses = true;
+            activePassesList.addView(buildActivePassCard(record));
+        }
+
+        if (!hasActivePasses) {
+            TextView emptyMessage = new TextView(this);
+            emptyMessage.setText("No students are currently out.");
+            emptyMessage.setTextSize(18);
+            emptyMessage.setTextColor(Color.DKGRAY);
+            emptyMessage.setGravity(Gravity.CENTER);
+            emptyMessage.setPadding(0, 48, 0, 48);
+            activePassesList.addView(emptyMessage);
+        }
+        updateActivePassesButton();
+    }
+
+    private View buildActivePassCard(PassRecord record) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(24, 20, 24, 20);
+        card.setBackgroundColor(Color.WHITE);
+
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        cardParams.setMargins(0, 0, 0, 16);
+        card.setLayoutParams(cardParams);
+
+        TextView name = new TextView(this);
+        name.setText(record.studentName);
+        name.setTextSize(21);
+        name.setTypeface(null, Typeface.BOLD);
+        name.setTextColor(Color.BLACK);
+        card.addView(name);
+
+        TextView details = new TextView(this);
+        String teacherLine = record.teacherName.isEmpty() ? "" : "Teacher: " + record.teacherName + "\n";
+        details.setText(teacherLine + "Destination: " + record.destination + "\nOut: "
+                + formatDateTime(record.issuedAt));
+        details.setTextSize(16);
+        details.setTextColor(Color.DKGRAY);
+        details.setPadding(0, 8, 0, 8);
+        card.addView(details);
+
+        Button backButton = new Button(this);
+        backButton.setText("BACK (STUDENT RETURNED)");
+        backButton.setTextColor(Color.WHITE);
+        backButton.setBackgroundColor(Color.parseColor("#388E3C"));
+        backButton.setOnClickListener(v -> markStudentReturned(record.id));
+        card.addView(backButton);
+        return card;
+    }
+
+    private void markStudentReturned(String id) {
+        List<PassRecord> records = loadPassRecords();
+        for (PassRecord record : records) {
+            if (record.id.equals(id)) {
+                record.returnedAt = System.currentTimeMillis();
+                savePassRecords(records);
+                Toast.makeText(this, record.studentName + " marked as returned.", Toast.LENGTH_SHORT).show();
+                refreshActivePasses();
+                return;
+            }
+        }
+    }
+
+    private void updateActivePassesButton() {
+        if (activePassesButton == null) {
+            return;
+        }
+        int activeCount = 0;
+        for (PassRecord record : loadPassRecords()) {
+            if (record.returnedAt == 0) {
+                activeCount++;
+            }
+        }
+        activePassesButton.setText("ACTIVE PASSES (" + activeCount + ")");
+    }
+
+    private List<PassRecord> loadPassRecords() {
+        List<PassRecord> records = new ArrayList<>();
+        String savedLog = prefs.getString(KEY_PASS_LOG, "[]");
+        try {
+            JSONArray jsonRecords = new JSONArray(savedLog);
+            for (int i = 0; i < jsonRecords.length(); i++) {
+                JSONObject jsonRecord = jsonRecords.getJSONObject(i);
+                records.add(new PassRecord(
+                        jsonRecord.getString("id"),
+                        jsonRecord.getString("studentName"),
+                        jsonRecord.optString("teacherName", ""),
+                        jsonRecord.optString("destination", DESTINATION),
+                        jsonRecord.getLong("issuedAt"),
+                        jsonRecord.optLong("returnedAt", 0)
+                ));
+            }
+        } catch (JSONException e) {
+            Log.e("StudentPass", "Could not read saved pass log", e);
+        }
+        return records;
+    }
+
+    private void savePassRecords(List<PassRecord> records) {
+        JSONArray jsonRecords = new JSONArray();
+        for (PassRecord record : records) {
+            try {
+                JSONObject jsonRecord = new JSONObject();
+                jsonRecord.put("id", record.id);
+                jsonRecord.put("studentName", record.studentName);
+                jsonRecord.put("teacherName", record.teacherName);
+                jsonRecord.put("destination", record.destination);
+                jsonRecord.put("issuedAt", record.issuedAt);
+                jsonRecord.put("returnedAt", record.returnedAt);
+                jsonRecords.put(jsonRecord);
+            } catch (JSONException e) {
+                Log.e("StudentPass", "Could not save pass record", e);
+            }
+        }
+        prefs.edit().putString(KEY_PASS_LOG, jsonRecords.toString()).apply();
+    }
+
+    private String formatDateTime(long time) {
+        return new SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.getDefault()).format(new Date(time));
+    }
+
     private void startCamera() {
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
 
@@ -340,6 +580,9 @@ public class App extends AppCompatActivity {
 
     private void parseAndDisplayCardData(Text visionText) {
         String studentName = IdCardParser.extractName(visionText);
+        currentStudentName = studentName;
+        currentPassIssuedAt = System.currentTimeMillis();
+        currentPassRecorded = false;
         String date = new SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(new Date());
         String time = new SimpleDateFormat("hh:mm a", Locale.getDefault()).format(new Date());
 
@@ -364,6 +607,15 @@ public class App extends AppCompatActivity {
     private void resetToCameraScreen() {
         resultLayout.setVisibility(View.GONE);
         cameraContainer.setVisibility(View.VISIBLE);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (activePassesLayout != null && activePassesLayout.getVisibility() == View.VISIBLE) {
+            hideActivePasses();
+        } else {
+            super.onBackPressed();
+        }
     }
 
     @Override
@@ -401,5 +653,24 @@ public class App extends AppCompatActivity {
         }
         cameraExecutor.shutdown();
         usbPassPrinter.release();
+    }
+
+    private static final class PassRecord {
+        final String id;
+        final String studentName;
+        final String teacherName;
+        final String destination;
+        final long issuedAt;
+        long returnedAt;
+
+        PassRecord(String id, String studentName, String teacherName, String destination,
+                   long issuedAt, long returnedAt) {
+            this.id = id;
+            this.studentName = studentName;
+            this.teacherName = teacherName;
+            this.destination = destination;
+            this.issuedAt = issuedAt;
+            this.returnedAt = returnedAt;
+        }
     }
 }
