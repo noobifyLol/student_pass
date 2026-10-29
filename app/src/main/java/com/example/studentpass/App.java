@@ -5,6 +5,7 @@ import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
@@ -16,12 +17,15 @@ import android.util.Size;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -68,13 +72,22 @@ public class App extends AppCompatActivity {
     private static final String KEY_DEFAULT_TEACHER = "default_teacher";
     private static final String KEY_PASS_LOG = "pass_log";
 
-    private static final String DESTINATION = "BATHROOM";
+    // Where a student can go. BATHROOM is first so it's what the picker starts on.
+    // OTHER shows a text box so the teacher can type anything that isn't on the list.
+    private static final String DEFAULT_DESTINATION = "BATHROOM";
+    private static final String OTHER_DESTINATION = "OTHER";
+    private static final String[] DESTINATIONS = {
+            DEFAULT_DESTINATION, "NURSE", "MAIN OFFICE", "COUNSELOR", "LIBRARY",
+            "WATER FOUNTAIN", "LOCKER", OTHER_DESTINATION
+    };
 
     private FrameLayout cameraContainer;
     private PreviewView previewView;
     private Button captureButton;
     private EditText teacherNameInput;
     private CheckBox defaultTeacherCheckBox;
+    private Spinner destinationSpinner;
+    private EditText otherDestinationInput;
 
     private LinearLayout resultLayout;
     private TextView passTitleTextView;
@@ -103,6 +116,7 @@ public class App extends AppCompatActivity {
     private SharedPreferences prefs;
     private String currentTeacherName = "";
     private String currentStudentName = "";
+    private String currentDestination = DEFAULT_DESTINATION;
     private long currentPassIssuedAt;
     private boolean currentPassRecorded;
 
@@ -417,6 +431,8 @@ public class App extends AppCompatActivity {
             }
         });
 
+        addDestinationPicker(panel);
+
         FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -424,6 +440,65 @@ public class App extends AppCompatActivity {
         panelParams.gravity = Gravity.TOP;
         panel.setLayoutParams(panelParams);
         return panel;
+    }
+
+    private void addDestinationPicker(LinearLayout panel) {
+        TextView label = new TextView(this);
+        label.setText("DESTINATION");
+        label.setTextSize(14);
+        label.setTypeface(null, Typeface.BOLD);
+        label.setTextColor(Color.WHITE);
+        label.setPadding(0, 16, 0, 0);
+        panel.addView(label);
+
+        destinationSpinner = new Spinner(this);
+        // The panel is dark, so the selected item is drawn in white. The dropdown list
+        // itself opens on a light background, so it keeps the normal dark text.
+        ArrayAdapter<String> adapter = new ArrayAdapter<String>(
+                this, android.R.layout.simple_spinner_item, DESTINATIONS) {
+            @NonNull
+            @Override
+            public View getView(int position, @Nullable View convertView, @NonNull ViewGroup parent) {
+                TextView view = (TextView) super.getView(position, convertView, parent);
+                view.setTextColor(Color.WHITE);
+                view.setTextSize(18);
+                return view;
+            }
+        };
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        destinationSpinner.setAdapter(adapter);
+        destinationSpinner.setBackgroundTintList(ColorStateList.valueOf(Color.WHITE));
+        panel.addView(destinationSpinner);
+
+        otherDestinationInput = new EditText(this);
+        otherDestinationInput.setHint("Where is the student going?");
+        otherDestinationInput.setHintTextColor(Color.parseColor("#88FFFFFF"));
+        otherDestinationInput.setTextColor(Color.WHITE);
+        otherDestinationInput.setTextSize(18);
+        otherDestinationInput.setSingleLine(true);
+        otherDestinationInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
+        otherDestinationInput.setVisibility(View.GONE);
+        panel.addView(otherDestinationInput);
+
+        destinationSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                boolean isOther = OTHER_DESTINATION.equals(DESTINATIONS[position]);
+                otherDestinationInput.setVisibility(isOther ? View.VISIBLE : View.GONE);
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) { }
+        });
+    }
+
+    /** What the picker is set to right now. Empty if OTHER is picked but nothing was typed. */
+    private String selectedDestination() {
+        String picked = String.valueOf(destinationSpinner.getSelectedItem());
+        if (OTHER_DESTINATION.equals(picked)) {
+            return otherDestinationInput.getText().toString().trim().toUpperCase(Locale.US);
+        }
+        return picked;
     }
 
     private void saveDefaultTeacher(String name) {
@@ -591,7 +666,7 @@ public class App extends AppCompatActivity {
         List<PassRecord> records = loadPassRecords();
         records.add(new PassRecord(
                 UUID.randomUUID().toString(), currentStudentName, currentTeacherName,
-                DESTINATION, currentPassIssuedAt, 0
+                currentDestination, currentPassIssuedAt, 0
         ));
         savePassRecords(records);
         currentPassRecorded = true;
@@ -698,7 +773,7 @@ public class App extends AppCompatActivity {
                         jsonRecord.getString("id"),
                         jsonRecord.getString("studentName"),
                         jsonRecord.optString("teacherName", ""),
-                        jsonRecord.optString("destination", DESTINATION),
+                        jsonRecord.optString("destination", DEFAULT_DESTINATION),
                         jsonRecord.getLong("issuedAt"),
                         jsonRecord.optLong("returnedAt", 0)
                 ));
@@ -770,6 +845,12 @@ public class App extends AppCompatActivity {
     }
 
     private void triggerCapture() {
+        String destination = selectedDestination();
+        if (destination.isEmpty()) {
+            Toast.makeText(this, "Type where the student is going first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        currentDestination = destination;
         currentTeacherName = teacherNameInput.getText().toString().trim();
         isProcessingFrame = true;
         Toast.makeText(this, "Reading Card...", Toast.LENGTH_SHORT).show();
@@ -813,7 +894,7 @@ public class App extends AppCompatActivity {
         if (!currentTeacherName.isEmpty()) {
             pass.append("TEACHER: ").append(currentTeacherName).append("\n");
         }
-        pass.append("DESTINATION: ").append(DESTINATION).append("\n")
+        pass.append("DESTINATION: ").append(currentDestination).append("\n")
                 .append("DATE: ").append(date).append("\n")
                 .append("TIME: ").append(time);
 
